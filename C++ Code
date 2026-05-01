@@ -1,0 +1,367 @@
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <iostream>
+#include <queue>
+#include <sstream>
+#include <stack>
+#include <string>
+#include <thread>
+#include <vector>
+
+#define RESET "\033[0m"
+#define RED "\033[31m"
+#define GREEN "\033[32m"
+#define BRIGHT_GREEN "\033[1;92m"
+#define BLUE "\033[34m"
+#define BRIGHT_BLUE "\033[1;94m"
+#define MAGENTA "\033[35m"
+#define WHITE "\033[37m"
+#define CYAN "\033[36m"
+
+using namespace std;
+
+// ==================== POINT ====================
+struct Point {
+  int x, y;
+  bool operator==(const Point &other) const {
+    return x == other.x && y == other.y;
+  }
+};
+
+// ==================== MAZEMAP ====================
+class MazeMap {
+private:
+  vector<vector<char>> grid;
+  vector<vector<char>> originalGrid;
+  Point start, end;
+  bool has_start = false, has_end = false;
+
+public:
+  bool loadFromMap(const string &map) {
+    grid.clear();
+    stringstream ss(map);
+    string line;
+
+    while (getline(ss, line)) {
+      vector<char> row;
+      for (char c : line) {
+        if (c != ' ')
+          row.push_back(c);
+      }
+      if (!row.empty())
+        grid.push_back(row);
+    }
+
+    originalGrid = grid;
+    findStartEnd();
+    return has_start && has_end;
+  }
+
+  void resetGrid() {
+    grid = originalGrid;
+    findStartEnd();
+  }
+
+  void findStartEnd() {
+    has_start = has_end = false;
+
+    for (int y = 0; y < grid.size(); y++) {
+      for (int x = 0; x < grid[y].size(); x++) {
+        if (grid[y][x] == 'S') {
+          start = {x, y};
+          has_start = true;
+          grid[y][x] = '.';
+        }
+        if (grid[y][x] == 'E') {
+          end = {x, y};
+          has_end = true;
+          grid[y][x] = '.';
+        }
+      }
+    }
+  }
+
+  bool isWalkable(int x, int y) const {
+    return y >= 0 && y < grid.size() && x >= 0 && x < grid[0].size() &&
+           grid[y][x] != '#';
+  }
+
+  int rows() const { return grid.size(); }
+  int cols() const { return grid[0].size(); }
+
+  Point getStart() const { return start; }
+  Point getEnd() const { return end; }
+
+  void setCell(int x, int y, char c) { grid[y][x] = c; }
+
+  void print(Point current = {-1, -1}) const {
+    for (int y = 0; y < rows(); y++) {
+      for (int x = 0; x < cols(); x++) {
+
+        char c = grid[y][x];
+
+        if (x == start.x && y == start.y)
+          cout << GREEN << "S " << RESET;
+        else if (x == end.x && y == end.y)
+          cout << BLUE << "E " << RESET;
+        else if (x == current.x && y == current.y)
+          cout << CYAN << "@ " << RESET;
+        else if (c == '#')
+          cout << RED << "# " << RESET;
+        else if (c == 'v')
+          cout << BRIGHT_GREEN << "v " << RESET;
+        else if (c == '*')
+          cout << BRIGHT_BLUE << "* " << RESET;
+        else
+          cout << WHITE << ". " << RESET;
+      }
+      cout << "\n";
+    }
+    cout << "\n";
+  }
+};
+
+// ==================== SOLVER ====================
+class Solver {
+private:
+  MazeMap &maze;
+  vector<vector<bool>> visited;
+  vector<vector<Point>> parent;
+  bool found = false;
+  int speed;
+
+public:
+  Solver(MazeMap &m, int sp) : maze(m), speed(sp) {}
+
+  void reset() {
+    found = false;
+    visited.assign(maze.rows(), vector<bool>(maze.cols(), false));
+    parent.assign(maze.rows(), vector<Point>(maze.cols(), {-1, -1}));
+  }
+
+  void clearScreen() {
+#ifdef _WIN32
+    system("cls");
+#else
+    system("clear");
+#endif
+  }
+
+  void animate(Point current) {
+    clearScreen();
+    maze.print(current);
+    this_thread::sleep_for(chrono::milliseconds(speed));
+  }
+
+  bool solveDFS() {
+    maze.resetGrid();
+    reset();
+
+    stack<Point> st;
+    st.push(maze.getStart());
+    visited[maze.getStart().y][maze.getStart().x] = true;
+
+    int dx[] = {0, 0, 1, -1};
+    int dy[] = {1, -1, 0, 0};
+
+    while (!st.empty()) {
+      Point cur = st.top();
+      st.pop();
+
+      if (cur == maze.getEnd()) {
+        found = true;
+        break;
+      }
+
+      maze.setCell(cur.x, cur.y, 'v');
+      animate(cur);
+
+      for (int i = 0; i < 4; i++) {
+        int nx = cur.x + dx[i];
+        int ny = cur.y + dy[i];
+
+        if (maze.isWalkable(nx, ny) && !visited[ny][nx]) {
+          visited[ny][nx] = true;
+          parent[ny][nx] = cur;
+          st.push({nx, ny});
+        }
+      }
+    }
+
+    showPath();
+    printStats("DFS");
+    return found;
+  }
+
+  bool solveBFS() {
+    maze.resetGrid();
+    reset();
+
+    queue<Point> q;
+    q.push(maze.getStart());
+    visited[maze.getStart().y][maze.getStart().x] = true;
+
+    int dx[] = {0, 0, 1, -1};
+    int dy[] = {1, -1, 0, 0};
+
+    while (!q.empty()) {
+      Point cur = q.front();
+      q.pop();
+
+      if (cur == maze.getEnd()) {
+        found = true;
+        break;
+      }
+
+      maze.setCell(cur.x, cur.y, 'v');
+      animate(cur);
+
+      for (int i = 0; i < 4; i++) {
+        int nx = cur.x + dx[i];
+        int ny = cur.y + dy[i];
+
+        if (maze.isWalkable(nx, ny) && !visited[ny][nx]) {
+          visited[ny][nx] = true;
+          parent[ny][nx] = cur;
+          q.push({nx, ny});
+        }
+      }
+    }
+
+    showPath();
+    printStats("BFS");
+    return found;
+  }
+
+  vector<Point> getPath() {
+    vector<Point> path;
+    if (!found)
+      return path;
+
+    Point cur = maze.getEnd();
+    while (!(cur == maze.getStart())) {
+      path.push_back(cur);
+      cur = parent[cur.y][cur.x];
+    }
+    path.push_back(maze.getStart());
+    reverse(path.begin(), path.end());
+    return path;
+  }
+
+  void showPath() {
+    auto path = getPath();
+
+    for (auto &p : path) {
+      if (!(p == maze.getStart()) && !(p == maze.getEnd())) {
+        maze.setCell(p.x, p.y, '*');
+        clearScreen();
+        maze.print();
+        this_thread::sleep_for(chrono::milliseconds(speed + 5));
+      }
+    }
+
+    // Final clean render (ONLY ONCE)
+    clearScreen();
+    maze.print();
+  }
+
+  void printStats(string algo) {
+    cout << "\n==== " << algo << " RESULTS ====\n";
+
+    int count = 0;
+    for (auto &row : visited)
+      for (bool v : row)
+        if (v)
+          count++;
+
+    cout << "Visited Nodes: " << count << "\n";
+    cout << "Path Length: " << getPath().size() << "\n\n";
+
+    cout << "====================================\n\n";
+  }
+};
+
+// ==================== MAIN ====================
+int main() {
+
+  string mazeStr = "##################################################\n"
+                   "#......#.........#...............#...............#\n"
+                   "#.###.#.#######.#.###########.#.#.###########.#.#\n"
+                   "#...#.#.......#...........S.#.#.#.#.........#.#.#\n"
+                   "###.#.##.####.#.#.#.#######.#.#.#.#.#######.#.#.#\n"
+                   "#...#.........#.#.#.....#...#.#.#.#.....#...#.#.#\n"
+                   "#.######....###.#.#####.#.###.#.#.#####.#.###.#.#\n"
+                   "#...............#.....#.#.....#.#.....#.#.....#.#\n"
+                   "#.########..###.#####.#.#######.#####.#.#####.#.#\n"
+                   "#.#...........#.#.....#.......#.....#.#.#..##...#\n"
+                   "#.#.#######.##.#.#.####...####.#####.#.#.#......#\n"
+                   "#.#.#.......#.#.#.#.........#.....#.#.#.#.....#.#\n"
+                   "#.#.#.#####.#.#.#.#.#######.##.##.#.#.#.#####.#.#\n"
+                   "#.#.#.....#.#.#.#.#.....#...#.....#.#.#.......#.#\n"
+                   "#.#.#####.#.#.#.#.#####.#.###.#####.#.#####...#.#\n"
+                   "#.#.....#.#.#.#.#.....#.#...#.....#.#.....#...#.#\n"
+                   "#.#####.#.#.#.#.#####.#.###.#####.#.#####.#.#.#.#\n"
+                   "#.....#.#.#.#.#.....#.#.....#.....#.....#.#.#.#.#\n"
+                   "#####.#.#.#.#.#####.#.#######.#########.#.#.#.#.#\n"
+                   "#.....#.#.#.#.....#.#.........#.........#.#...#.#\n"
+                   "#.#####.#.#.#####.#.###########.#########.#.#.#.#\n"
+                   "#.......#.#.....#.#...........#.........#.#.#.#.#\n"
+                   "#.#######.#####.#.###########.#########.#.#.#.#.#\n"
+                   "#.#.....#.....#.#.#.........#.#.........#.#.#.#.#\n"
+                   "#.#.###.#####.#.#.#.#######.#.#.#########.#.#.#.#\n"
+                   "#.#...#.....#.#.#.#.....#...#.#.............#.#.#\n"
+                   "#.###.#####.#.#.#.#####.#.###.#....####.#.#.#.#.#\n"
+                   "#...#.....#.#.#.#.....#.#.....#.........#.#.#.#.#\n"
+                   "###.#####.#.#.#.#####.#.#..####.####..###.#.#...#\n"
+                   "#...#.....#.#.#.....#.#.........#.........#.#...#\n"
+                   "#.###.#####.#..####.#.###..######.#########.#.#.#\n"
+                   "#...#.......#.....#.#...........#.........#.#.#.#\n"
+                   "#.#######..E##..####.###########.#########.#.#.#.#\n"
+                   "#...........#.....#.........#...#.........#.#.#.#\n"
+                   "#.#########.#####.#########.#.###.#########.#.#.#\n"
+                   "#.#.......#.....#.........#.....#.........#.#.#.#\n"
+                   "#.#.#####.#.###.....#####.#.###.#########.#.#.#.#\n"
+                   "#.#.....#.....#.........#.#.....#.........#.#.#.#\n"
+                   "#..####.#####.##..#####.#.#######.#########.#.#.#\n"
+                   "#.....#.....#.........#.#.........#.........#.#.#\n"
+                   "#####.#####.####..###.#.######..###.#########.#.#\n"
+                   "#.....#.....#.........#...........#.........#.#.#\n"
+                   "#.#####.#####.###########....####.#########.#.#.#\n"
+                   "#.......#.....#.................#.........#.#.#.#\n"
+                   "#.#######.#####.###.....#######.#########.#.#.#.#\n"
+                   "#.........#.....#.............#.........#.#.#.#.#\n"
+                   "#.#########.#####.###########.######.##.#.#.#.#.#\n"
+                   "#...........#.....#.........#.........#.#.#.#.###\n"
+                   "##################################################\n";
+
+  MazeMap maze;
+  maze.loadFromMap(mazeStr);
+
+  int choice, speed;
+
+  cout << "Choose Algorithm:\n";
+  cout << "1. DFS\n2. BFS\nChoice: ";
+  cin >> choice;
+
+  cout << "Enter speed (lower = faster, recommended 5–20): ";
+  cin >> speed;
+
+  Solver solver(maze, speed);
+
+  cout << "\nStarting...\n";
+  this_thread::sleep_for(chrono::seconds(1));
+
+#ifdef _WIN32
+  system("cls");
+#else
+  system("clear");
+#endif
+
+  if (choice == 1)
+    solver.solveDFS();
+  else
+    solver.solveBFS();
+
+  return 0;
+}
